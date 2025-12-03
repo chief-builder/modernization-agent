@@ -23,6 +23,35 @@ Analyze current test coverage and generate tests to achieve the target coverage.
 
 ## Process
 
+### Step 0: CRITICAL - Detect Testing Framework and Setup
+
+**BEFORE generating any tests**, you MUST:
+
+1. **Detect the testing framework** by checking:
+   - package.json devDependencies (vitest, jest, mocha, etc.)
+   - Existing test configuration files (vitest.config.ts, jest.config.js, etc.)
+   - Import patterns in existing test files
+
+2. **Find existing test locations** to match the project's test organization:
+   \`\`\`bash
+   # Find existing test directories and files
+   find . -type d -name "__tests__" -o -name "tests" -o -name "test" | head -20
+   find . -name "*.test.ts" -o -name "*.spec.ts" | head -20
+   \`\`\`
+
+3. **Check TypeScript configurations** to ensure tests won't break builds:
+   \`\`\`bash
+   # Check what's excluded from TypeScript builds
+   cat tsconfig.json | grep -A5 "exclude"
+   find . -name "tsconfig*.json" -exec grep -l "exclude" {} \\;
+   \`\`\`
+
+4. **Place test files correctly**:
+   - If project has a dedicated \`tests/\` or \`__tests__/\` directory at root, use that
+   - If tests are colocated (alongside source files), check that __tests__ dirs are excluded from tsconfig
+   - For monorepos: place tests in the same package's test directory structure
+   - NEVER place test files where they'll be included in production builds
+
 ### Step 1: Analyze Existing Tests
 \`\`\`bash
 # Find existing test files
@@ -55,6 +84,29 @@ npm run test:coverage
 \`\`\`
 
 ## Test Generation Guidelines
+
+### IMPORTANT: Framework-Specific Imports
+
+Use the SAME testing framework and import style as existing tests in the project:
+
+**Vitest:**
+\`\`\`typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+\`\`\`
+
+**Jest:**
+\`\`\`typescript
+// Jest globals are typically auto-injected, but if explicit:
+import { describe, it, expect, jest } from '@jest/globals';
+\`\`\`
+
+**Mocha + Chai:**
+\`\`\`typescript
+import { expect } from 'chai';
+import { describe, it, beforeEach } from 'mocha';
+\`\`\`
+
+Always check existing test files first and match their import patterns exactly!
 
 ### Unit Tests
 \`\`\`typescript

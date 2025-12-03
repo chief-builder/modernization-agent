@@ -542,28 +542,30 @@ export async function detectLanguage(projectDir: string): Promise<string> {
  * Detect the framework used in a project
  */
 export async function detectFramework(projectDir: string): Promise<string | undefined> {
-  // First check package.json for dependencies
-  const packageJson = await readJsonFile<{
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-  }>(join(projectDir, 'package.json'));
+  // Framework detection order - check for dependencies in package.json
+  const frameworkChecks: [string, string[]][] = [
+    ['nuxt', ['nuxt', 'nuxt3', '@nuxt/kit']],
+    ['vue', ['vue', '@vue/cli-service', 'vite-plugin-vue']],
+    ['nextjs', ['next']],
+    ['react', ['react', 'react-dom']],
+    ['angular', ['@angular/core']],
+    ['nestjs', ['@nestjs/core']],
+    ['express', ['express']],
+  ];
 
-  if (packageJson) {
+  // Helper to check dependencies in a package.json
+  const checkDepsInPackage = async (pkgPath: string): Promise<string | undefined> => {
+    const packageJson = await readJsonFile<{
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    }>(pkgPath);
+
+    if (!packageJson) return undefined;
+
     const allDeps = {
       ...packageJson.dependencies,
       ...packageJson.devDependencies,
     };
-
-    // Check for framework dependencies
-    const frameworkChecks: [string, string[]][] = [
-      ['vue', ['vue', '@vue/cli-service', 'nuxt']],
-      ['react', ['react', 'react-dom', 'next']],
-      ['angular', ['@angular/core']],
-      ['nestjs', ['@nestjs/core']],
-      ['express', ['express']],
-      ['nextjs', ['next']],
-      ['nuxt', ['nuxt']],
-    ];
 
     for (const [framework, deps] of frameworkChecks) {
       for (const dep of deps) {
@@ -571,6 +573,22 @@ export async function detectFramework(projectDir: string): Promise<string | unde
           return framework;
         }
       }
+    }
+    return undefined;
+  };
+
+  // First check root package.json
+  const rootFramework = await checkDepsInPackage(join(projectDir, 'package.json'));
+  if (rootFramework) {
+    return rootFramework;
+  }
+
+  // For monorepos, check workspace packages
+  const workspaces = await findWorkspacePackages(projectDir);
+  for (const workspace of workspaces) {
+    const wsFramework = await checkDepsInPackage(join(projectDir, workspace, 'package.json'));
+    if (wsFramework) {
+      return wsFramework;
     }
   }
 

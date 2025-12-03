@@ -34,8 +34,24 @@ import {
   getModelForAgent,
   initializeProject,
 } from './agents/orchestrator.js';
+import { checkAuthentication } from './agents/runner.js';
 
 const VERSION = '0.1.0';
+
+/**
+ * Display authentication status
+ */
+function displayAuthStatus(): void {
+  const auth = checkAuthentication();
+  if (auth.authenticated) {
+    console.log(chalk.green(`Authentication: ${auth.method === 'oauth' ? 'OAuth Token' : 'API Key'}`));
+  } else {
+    console.log(chalk.yellow('\nAuthentication required for agent modes (coverage, enhance, migrate).'));
+    console.log(chalk.gray('Set one of the following environment variables:'));
+    console.log(chalk.gray('  - CLAUDE_CODE_OAUTH_TOKEN (for Claude MAX subscribers)'));
+    console.log(chalk.gray('  - ANTHROPIC_API_KEY (for API key users)\n'));
+  }
+}
 
 /**
  * Create the CLI program
@@ -183,6 +199,16 @@ async function runMode(
 
   console.log(chalk.blue(`\n🔧 Modernization Agent - ${mode.charAt(0).toUpperCase() + mode.slice(1)} Mode\n`));
   console.log(chalk.gray(`Project: ${absolutePath}\n`));
+
+  // Check authentication for modes that require Claude
+  if (mode !== 'discovery') {
+    displayAuthStatus();
+    const auth = checkAuthentication();
+    if (!auth.authenticated) {
+      console.error(chalk.red('Cannot run agent without authentication.'));
+      process.exit(1);
+    }
+  }
 
   // Check if already initialized
   const initialized = await isInitialized(absolutePath);

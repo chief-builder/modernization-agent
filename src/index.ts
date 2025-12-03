@@ -99,3 +99,10 @@ export {
   getMigrationPrompt,
   getValidationPrompt,
 } from './prompts/index.js';
+
+// Agent runner
+export {
+  runner,
+  checkAuthentication,
+  runAgentSession,
+} from './agents/runner.js';

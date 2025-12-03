@@ -32,6 +32,7 @@ import {
 } from '../state.js';
 import { getSecurityConfigForMode, validateCommand } from '../security.js';
 import { runDiscovery } from './discovery.js';
+import { runAgentSession, checkAuthentication } from './runner.js';
 import { basename } from 'node:path';
 
 /**
@@ -490,14 +491,33 @@ export async function runOrchestrator(
     };
   }
 
-  // For other agents, build context for external agent execution
-  const context = await buildAgentContext(state, nextAgent, config);
+  // For other agents, run via Claude Agent SDK
+  // First check authentication
+  const auth = checkAuthentication();
+  if (!auth.authenticated) {
+    return {
+      shouldContinue: false,
+      error: auth.error,
+    };
+  }
 
-  // Return information about what should run next
-  return {
-    shouldContinue: true,
-    artifactsCreated: ['.modernization/state.json'],
-  };
+  // Run the agent session
+  const result = await runAgentSession(nextAgent, state, config, (msg) => {
+    operations.push(msg);
+  });
+
+  // Complete session
+  completeSessionSummary(
+    summary,
+    operations,
+    result.artifactsCreated || [],
+    result.shouldContinue ? ['Continue with next agent'] : [],
+    result.error ? [result.error] : []
+  );
+  addSessionSummary(state, summary);
+  await saveState(projectDir, state);
+
+  return result;
 }
 
 /**

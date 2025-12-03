@@ -178,6 +178,7 @@ export interface ExternalDependency {
   type: string;
   usedBy: string[];
   configLocation?: string;
+  version?: string;
 }
 
 export interface DatabaseSchema {

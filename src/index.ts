@@ -77,6 +77,16 @@ export {
   prioritizeFeatures,
   generateDiscoveryReport,
   saveDiscoveryResults,
+  // New discovery functions
+  detectLanguage,
+  detectFramework,
+  detectArchitecturePattern,
+  findWorkspacePackages,
+  findEntryPoints,
+  extractDependencies,
+  scanSourceFiles,
+  extractFeatures,
+  runDiscovery,
 } from './agents/discovery.js';
 
 // Agent prompts

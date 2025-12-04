@@ -91,15 +91,19 @@ npm test
 npm run test:coverage
 \`\`\`
 
-### Step 5: CRITICAL - Lint Generated Tests
+### Step 5: CRITICAL - Lint and Typecheck Generated Tests
 \`\`\`bash
 # Run linter on generated test files
 pnpm run lint --fix  # or npm run lint -- --fix
+
+# Run TypeScript type checking
+pnpm exec tsc --noEmit  # or npm run typecheck
 
 # If there are unfixable errors, manually fix them:
 # - Remove unused imports
 # - Fix formatting issues
 # - Ensure consistent code style with project
+# - Fix type errors (missing properties, wrong types, etc.)
 \`\`\`
 
 **Common lint issues to avoid:**
@@ -108,10 +112,26 @@ pnpm run lint --fix  # or npm run lint -- --fix
 - ❌ Incorrect formatting (not matching project's prettier config)
 - ❌ Missing type annotations (if project requires them)
 
+**Common TypeScript issues to avoid:**
+- ❌ Missing required properties in object literals
+- ❌ Wrong types for function arguments
+- ❌ Incorrect property names (typos)
+- ❌ Using types that don't match the actual interface definitions
+
+**IMPORTANT:** Always check the actual type definitions before creating test data:
+\`\`\`bash
+# Find type definitions for the module you're testing
+grep -r "interface.*Header" --include="*.ts" src/
+grep -r "type.*Header" --include="*.ts" src/
+\`\`\`
+
 **Always verify BEFORE completing:**
 \`\`\`bash
 # Ensure no lint errors remain
 pnpm run lint  # Should exit with 0
+
+# Ensure no type errors remain
+pnpm exec tsc --noEmit  # Should exit with 0
 \`\`\`
 
 ## Test Generation Guidelines
@@ -263,6 +283,7 @@ Coverage session is successful when:
 3. Coverage improved (or is at target)
 4. Test coverage map is updated
 5. **All generated tests pass linting with zero errors**
+6. **All generated tests pass TypeScript type checking with zero errors**
 
 Update state.json with:
 - currentCoverage: new percentage
@@ -272,11 +293,13 @@ Update state.json with:
 
 Generated tests MUST:
 - Pass all lint checks (ESLint, Prettier, etc.)
+- Pass TypeScript type checking (tsc --noEmit)
 - Only import what is actually used
 - Follow the project's code style exactly
 - Use consistent formatting with existing test files
 - Have no unused variables or parameters
+- Use correct types that match the actual interface definitions
 
-If lint fails, fix the issues before marking the session complete.
+If lint or typecheck fails, fix the issues before marking the session complete.
 `;
 }

@@ -69,9 +69,8 @@ export function determineNextAgent(
       if (!state.discoveryComplete) {
         return 'discovery';
       }
-      if (!state.testCoverageMap) {
-        return 'coverage'; // Need baseline coverage
-      }
+      // Skip coverage requirement if enhancement spec is provided
+      // Coverage is recommended but not required for enhancements
       if (state.enhancementPlan) {
         const pending = state.enhancementPlan.enhancements.filter(
           (e) => e.status === 'pending' || e.status === 'in_progress'

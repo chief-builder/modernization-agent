@@ -239,6 +239,40 @@ async function runMode(
     process.exit(1);
   }
 
+  // Update mode if different
+  if (state.mode !== mode) {
+    state.mode = mode;
+  }
+
+  // Load enhancement spec file if provided
+  if (options.spec && mode === 'enhancement') {
+    try {
+      const specPath = resolve(options.spec);
+      const specContent = await readFile(specPath, 'utf-8');
+      state.enhancementSpec = specContent;
+      console.log(chalk.gray(`Loaded enhancement spec from: ${options.spec}`));
+    } catch (error) {
+      console.error(chalk.red(`Failed to read spec file: ${options.spec}`));
+      process.exit(1);
+    }
+  }
+
+  // Update target stack if provided
+  if (options.targetStack && mode === 'migration') {
+    const parts = options.targetStack.split(':');
+    const language = parts[0] ?? 'unknown';
+    const framework = parts[1];
+    state.targetStack = {
+      language,
+      version: 'latest',
+      framework,
+      keyDependencies: [],
+    };
+  }
+
+  // Save updated state
+  await saveState(absolutePath, state);
+
   // Check for pending approvals
   const pendingApprovals = getPendingApprovals(state);
   if (pendingApprovals.length > 0) {

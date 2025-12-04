@@ -46,7 +46,15 @@ Analyze current test coverage and generate tests to achieve the target coverage.
    find . -name "tsconfig*.json" -exec grep -l "exclude" {} \\;
    \`\`\`
 
-4. **Place test files correctly**:
+4. **Check linting configuration**:
+   \`\`\`bash
+   # Find lint config files
+   ls -la .eslintrc* eslint.config.* .prettierrc* 2>/dev/null
+   # Check package.json for lint scripts
+   cat package.json | grep -A2 '"lint"'
+   \`\`\`
+
+5. **Place test files correctly**:
    - If project has a dedicated \`tests/\` or \`__tests__/\` directory at root, use that
    - If tests are colocated (alongside source files), check that __tests__ dirs are excluded from tsconfig
    - For monorepos: place tests in the same package's test directory structure
@@ -81,6 +89,29 @@ npm test
 
 # Verify coverage improved
 npm run test:coverage
+\`\`\`
+
+### Step 5: CRITICAL - Lint Generated Tests
+\`\`\`bash
+# Run linter on generated test files
+pnpm run lint --fix  # or npm run lint -- --fix
+
+# If there are unfixable errors, manually fix them:
+# - Remove unused imports
+# - Fix formatting issues
+# - Ensure consistent code style with project
+\`\`\`
+
+**Common lint issues to avoid:**
+- ❌ Unused imports (import something you don't use)
+- ❌ Unused variables (define variables you don't use)
+- ❌ Incorrect formatting (not matching project's prettier config)
+- ❌ Missing type annotations (if project requires them)
+
+**Always verify BEFORE completing:**
+\`\`\`bash
+# Ensure no lint errors remain
+pnpm run lint  # Should exit with 0
 \`\`\`
 
 ## Test Generation Guidelines
@@ -231,9 +262,21 @@ Coverage session is successful when:
 2. No existing tests were broken
 3. Coverage improved (or is at target)
 4. Test coverage map is updated
+5. **All generated tests pass linting with zero errors**
 
 Update state.json with:
 - currentCoverage: new percentage
 - testCoverageMap: reference to coverage file
+
+## Code Quality Requirements
+
+Generated tests MUST:
+- Pass all lint checks (ESLint, Prettier, etc.)
+- Only import what is actually used
+- Follow the project's code style exactly
+- Use consistent formatting with existing test files
+- Have no unused variables or parameters
+
+If lint fails, fix the issues before marking the session complete.
 `;
 }

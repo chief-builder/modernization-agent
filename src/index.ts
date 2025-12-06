@@ -77,6 +77,16 @@ export {
   prioritizeFeatures,
   generateDiscoveryReport,
   saveDiscoveryResults,
+  // New discovery functions
+  detectLanguage,
+  detectFramework,
+  detectArchitecturePattern,
+  findWorkspacePackages,
+  findEntryPoints,
+  extractDependencies,
+  scanSourceFiles,
+  extractFeatures,
+  runDiscovery,
 } from './agents/discovery.js';
 
 // Agent prompts
@@ -89,3 +99,10 @@ export {
   getMigrationPrompt,
   getValidationPrompt,
 } from './prompts/index.js';
+
+// Agent runner
+export {
+  runner,
+  checkAuthentication,
+  runAgentSession,
+} from './agents/runner.js';

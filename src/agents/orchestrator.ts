@@ -23,12 +23,16 @@ import {
   loadTestCoverageMap,
   loadEnhancementPlan,
   loadMigrationPlan,
+  saveFunctionalityMap,
   createSessionSummary,
   completeSessionSummary,
   addSessionSummary,
   getPendingApprovals,
+  markDiscoveryComplete,
 } from '../state.js';
 import { getSecurityConfigForMode, validateCommand } from '../security.js';
+import { runDiscovery } from './discovery.js';
+import { runAgentSession, checkAuthentication } from './runner.js';
 import { basename } from 'node:path';
 
 /**
@@ -65,9 +69,8 @@ export function determineNextAgent(
       if (!state.discoveryComplete) {
         return 'discovery';
       }
-      if (!state.testCoverageMap) {
-        return 'coverage'; // Need baseline coverage
-      }
+      // Skip coverage requirement if enhancement spec is provided
+      // Coverage is recommended but not required for enhancements
       if (state.enhancementPlan) {
         const pending = state.enhancementPlan.enhancements.filter(
           (e) => e.status === 'pending' || e.status === 'in_progress'
@@ -213,16 +216,18 @@ export function generateStatusReport(state: ModernizationState): string {
 
   if (state.sessions.length > 0) {
     const lastSession = state.sessions[state.sessions.length - 1];
-    report += `\n### Last Session (#${lastSession.sessionNumber})\n`;
-    report += `- Agent: ${lastSession.agentType}\n`;
-    report += `- Operations: ${lastSession.operationsCompleted.length}\n`;
-    if (lastSession.errors.length > 0) {
-      report += `- Errors: ${lastSession.errors.length}\n`;
-    }
-    if (lastSession.nextActions.length > 0) {
-      report += `- Next Actions:\n`;
-      for (const action of lastSession.nextActions) {
-        report += `  - ${action}\n`;
+    if (lastSession) {
+      report += `\n### Last Session (#${lastSession.sessionNumber})\n`;
+      report += `- Agent: ${lastSession.agentType}\n`;
+      report += `- Operations: ${lastSession.operationsCompleted.length}\n`;
+      if (lastSession.errors.length > 0) {
+        report += `- Errors: ${lastSession.errors.length}\n`;
+      }
+      if (lastSession.nextActions.length > 0) {
+        report += `- Next Actions:\n`;
+        for (const action of lastSession.nextActions) {
+          report += `  - ${action}\n`;
+        }
       }
     }
   }
@@ -377,7 +382,9 @@ export async function initializeProject(
   }
   if (options.targetStack) {
     // Parse target stack (e.g., "go:gin" or "typescript:express")
-    const [language, framework] = options.targetStack.split(':');
+    const parts = options.targetStack.split(':');
+    const language = parts[0] ?? 'unknown';
+    const framework = parts[1];
     state.targetStack = {
       language,
       version: 'latest',
@@ -406,7 +413,7 @@ export async function runOrchestrator(
     // Initialize new project
     await initializeProject(projectDir, mode, {
       targetStack: config.targetStack,
-      specFile: config.specFile,
+      enhancementSpec: config.specFile,
     });
   }
 
@@ -427,10 +434,11 @@ export async function runOrchestrator(
 
   // Check for pending approvals
   const pendingApprovals = getPendingApprovals(state);
-  if (pendingApprovals.length > 0) {
+  const firstApproval = pendingApprovals[0];
+  if (firstApproval) {
     return {
       shouldContinue: false,
-      error: `Waiting for approval: ${pendingApprovals[0].description}`,
+      error: `Waiting for approval: ${firstApproval.description}`,
     };
   }
 
@@ -445,14 +453,70 @@ export async function runOrchestrator(
   state.sessionNumber = sessionNumber;
   await saveState(projectDir, state);
 
-  // Build context for the agent
-  const context = await buildAgentContext(state, nextAgent, config);
+  const operations: string[] = [];
+  const artifacts: string[] = [];
 
-  // Return information about what should run next
-  return {
-    shouldContinue: true,
-    artifactsCreated: ['.modernization/state.json'],
-  };
+  // Execute agent based on type
+  if (nextAgent === 'discovery') {
+    // Run the discovery process
+    const map = await runDiscovery(projectDir, (msg) => {
+      operations.push(msg);
+    });
+
+    // Save the functionality map
+    await saveFunctionalityMap(projectDir, map);
+    artifacts.push('.modernization/functionality_map.json');
+
+    // Update state
+    state.functionalityMap = map;
+    state.featuresTotal = map.features.length;
+    markDiscoveryComplete(state);
+    await saveState(projectDir, state);
+
+    // Complete session
+    completeSessionSummary(
+      summary,
+      operations,
+      artifacts,
+      ['Review functionality map', 'Run coverage analysis'],
+      []
+    );
+    addSessionSummary(state, summary);
+    await saveState(projectDir, state);
+
+    return {
+      shouldContinue: mode !== 'discovery',
+      artifactsCreated: ['.modernization/state.json', ...artifacts],
+    };
+  }
+
+  // For other agents, run via Claude Agent SDK
+  // First check authentication
+  const auth = checkAuthentication();
+  if (!auth.authenticated) {
+    return {
+      shouldContinue: false,
+      error: auth.error,
+    };
+  }
+
+  // Run the agent session
+  const result = await runAgentSession(nextAgent, state, config, (msg) => {
+    operations.push(msg);
+  });
+
+  // Complete session
+  completeSessionSummary(
+    summary,
+    operations,
+    result.artifactsCreated || [],
+    result.shouldContinue ? ['Continue with next agent'] : [],
+    result.error ? [result.error] : []
+  );
+  addSessionSummary(state, summary);
+  await saveState(projectDir, state);
+
+  return result;
 }
 
 /**

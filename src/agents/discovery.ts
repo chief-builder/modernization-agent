@@ -17,6 +17,9 @@ import type {
   ModernizationState,
 } from '../types.js';
 import { loadState, saveState, saveFunctionalityMap, markDiscoveryComplete } from '../state.js';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { join, relative, extname, basename, dirname } from 'node:path';
+import { glob } from 'glob';
 
 /**
  * Language detection patterns
@@ -281,7 +284,10 @@ export function addOrUpdateFeature(
   );
 
   if (existingIndex >= 0) {
-    map.features[existingIndex] = mergeFeatures(map.features[existingIndex], feature);
+    const existingFeature = map.features[existingIndex];
+    if (existingFeature) {
+      map.features[existingIndex] = mergeFeatures(existingFeature, feature);
+    }
   } else {
     map.features.push(feature);
   }
@@ -483,6 +489,616 @@ export async function saveDiscoveryResults(
 }
 
 /**
+ * Check if a path exists
+ */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read and parse a JSON file safely
+ */
+async function readJsonFile<T>(filePath: string): Promise<T | null> {
+  try {
+    const content = await readFile(filePath, 'utf-8');
+    return JSON.parse(content) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Count lines in a file
+ */
+async function countLines(filePath: string): Promise<number> {
+  try {
+    const content = await readFile(filePath, 'utf-8');
+    return content.split('\n').length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Detect the primary language of a project
+ */
+export async function detectLanguage(projectDir: string): Promise<string> {
+  for (const [language, { markers }] of Object.entries(LANGUAGE_PATTERNS)) {
+    for (const marker of markers) {
+      if (await pathExists(join(projectDir, marker))) {
+        return language;
+      }
+    }
+  }
+  return 'unknown';
+}
+
+/**
+ * Detect the framework used in a project
+ */
+export async function detectFramework(projectDir: string): Promise<string | undefined> {
+  // Framework detection order - check for dependencies in package.json
+  const frameworkChecks: [string, string[]][] = [
+    ['nuxt', ['nuxt', 'nuxt3', '@nuxt/kit']],
+    ['vue', ['vue', '@vue/cli-service', 'vite-plugin-vue']],
+    ['nextjs', ['next']],
+    ['react', ['react', 'react-dom']],
+    ['angular', ['@angular/core']],
+    ['nestjs', ['@nestjs/core']],
+    ['express', ['express']],
+  ];
+
+  // Helper to check dependencies in a package.json
+  const checkDepsInPackage = async (pkgPath: string): Promise<string | undefined> => {
+    const packageJson = await readJsonFile<{
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    }>(pkgPath);
+
+    if (!packageJson) return undefined;
+
+    const allDeps = {
+      ...packageJson.dependencies,
+      ...packageJson.devDependencies,
+    };
+
+    for (const [framework, deps] of frameworkChecks) {
+      for (const dep of deps) {
+        if (allDeps[dep]) {
+          return framework;
+        }
+      }
+    }
+    return undefined;
+  };
+
+  // First check root package.json
+  const rootFramework = await checkDepsInPackage(join(projectDir, 'package.json'));
+  if (rootFramework) {
+    return rootFramework;
+  }
+
+  // For monorepos, check workspace packages
+  const workspaces = await findWorkspacePackages(projectDir);
+  for (const workspace of workspaces) {
+    const wsFramework = await checkDepsInPackage(join(projectDir, workspace, 'package.json'));
+    if (wsFramework) {
+      return wsFramework;
+    }
+  }
+
+  // Check for marker files
+  for (const [framework, { markers }] of Object.entries(FRAMEWORK_PATTERNS)) {
+    for (const marker of markers) {
+      if (marker.includes('/') || marker.includes('.')) {
+        if (await pathExists(join(projectDir, marker))) {
+          return framework;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Detect architecture pattern (monorepo, layered, modular, etc.)
+ */
+export async function detectArchitecturePattern(projectDir: string): Promise<string> {
+  // Check for monorepo markers
+  const packageJson = await readJsonFile<{
+    workspaces?: string[] | { packages?: string[] };
+  }>(join(projectDir, 'package.json'));
+
+  if (packageJson?.workspaces) {
+    return 'monorepo';
+  }
+
+  if (await pathExists(join(projectDir, 'pnpm-workspace.yaml'))) {
+    return 'monorepo';
+  }
+
+  if (await pathExists(join(projectDir, 'lerna.json'))) {
+    return 'monorepo';
+  }
+
+  // Check for packages or apps directories
+  if (await pathExists(join(projectDir, 'packages'))) {
+    return 'monorepo';
+  }
+
+  // Check for layered architecture
+  const layeredMarkers = ['controllers', 'services', 'repositories', 'models'];
+  let layeredCount = 0;
+  for (const marker of layeredMarkers) {
+    if (await pathExists(join(projectDir, 'src', marker))) {
+      layeredCount++;
+    }
+  }
+  if (layeredCount >= 2) {
+    return 'layered';
+  }
+
+  return 'modular';
+}
+
+/**
+ * Find all workspace packages in a monorepo
+ */
+export async function findWorkspacePackages(projectDir: string): Promise<string[]> {
+  const packages: string[] = [];
+
+  // Check package.json workspaces
+  const packageJson = await readJsonFile<{
+    workspaces?: string[] | { packages?: string[] };
+  }>(join(projectDir, 'package.json'));
+
+  let workspacePatterns: string[] = [];
+
+  if (Array.isArray(packageJson?.workspaces)) {
+    workspacePatterns = packageJson.workspaces;
+  } else if (packageJson?.workspaces?.packages) {
+    workspacePatterns = packageJson.workspaces.packages;
+  }
+
+  // Also check pnpm-workspace.yaml
+  if (await pathExists(join(projectDir, 'pnpm-workspace.yaml'))) {
+    try {
+      const pnpmWorkspace = await readFile(join(projectDir, 'pnpm-workspace.yaml'), 'utf-8');
+      // Simple YAML parsing for packages array
+      const match = pnpmWorkspace.match(/packages:\s*\n((?:\s+-\s+['"]?[^\n]+['"]?\n?)+)/);
+      const matchedGroup = match?.[1];
+      if (matchedGroup) {
+        const patterns = matchedGroup.match(/-\s+['"]?([^\n'"]+)['"]?/g) || [];
+        for (const p of patterns) {
+          const pattern = p.replace(/-\s+['"]?/, '').replace(/['"]?$/, '').trim();
+          if (pattern && !workspacePatterns.includes(pattern)) {
+            workspacePatterns.push(pattern);
+          }
+        }
+      }
+    } catch {
+      // Ignore parsing errors
+    }
+  }
+
+  // Resolve workspace patterns to actual directories
+  for (const pattern of workspacePatterns) {
+    const resolvedPaths = await glob(pattern, {
+      cwd: projectDir,
+      absolute: false,
+    });
+    for (const resolvedPath of resolvedPaths) {
+      const pkgJsonPath = join(projectDir, resolvedPath, 'package.json');
+      if (await pathExists(pkgJsonPath)) {
+        packages.push(resolvedPath);
+      }
+    }
+  }
+
+  return packages;
+}
+
+/**
+ * Find entry points in a project
+ */
+export async function findEntryPoints(
+  projectDir: string,
+  language: string
+): Promise<EntryPoint[]> {
+  const entryPoints: EntryPoint[] = [];
+
+  // Check package.json for entry points
+  const packageJson = await readJsonFile<{
+    main?: string;
+    module?: string;
+    browser?: string;
+    bin?: string | Record<string, string>;
+    scripts?: Record<string, string>;
+    exports?: Record<string, unknown>;
+  }>(join(projectDir, 'package.json'));
+
+  if (packageJson) {
+    // Main field
+    if (packageJson.main) {
+      const mainPath = packageJson.main.replace(/^\.\//, '');
+      entryPoints.push({
+        file: mainPath,
+        type: 'main',
+      });
+    }
+
+    // Module field (ESM entry)
+    if (packageJson.module) {
+      const modulePath = packageJson.module.replace(/^\.\//, '');
+      entryPoints.push({
+        file: modulePath,
+        type: 'module',
+      });
+    }
+
+    // Bin entries
+    if (packageJson.bin) {
+      if (typeof packageJson.bin === 'string') {
+        entryPoints.push({
+          file: packageJson.bin.replace(/^\.\//, ''),
+          type: 'cli',
+        });
+      } else {
+        for (const [name, path] of Object.entries(packageJson.bin)) {
+          entryPoints.push({
+            file: path.replace(/^\.\//, ''),
+            type: 'cli',
+            function: name,
+          });
+        }
+      }
+    }
+
+    // Exports field (modern Node.js)
+    if (packageJson.exports) {
+      const parseExports = (
+        exports: Record<string, unknown>,
+        prefix = ''
+      ): void => {
+        for (const [key, value] of Object.entries(exports)) {
+          if (typeof value === 'string') {
+            const cleanPath = value.replace(/^\.\//, '');
+            const exportName = prefix ? `${prefix}/${key}` : key;
+            if (!entryPoints.some((e) => e.file === cleanPath)) {
+              entryPoints.push({
+                file: cleanPath,
+                type: 'export',
+                function: exportName,
+              });
+            }
+          } else if (typeof value === 'object' && value !== null) {
+            parseExports(value as Record<string, unknown>, key);
+          }
+        }
+      };
+      parseExports(packageJson.exports);
+    }
+  }
+
+  // Find files matching entry point patterns
+  const patterns = ENTRY_POINT_PATTERNS[language] || [];
+  for (const pattern of patterns) {
+    const matches = await glob(pattern, {
+      cwd: projectDir,
+      absolute: false,
+      ignore: ['**/node_modules/**', '**/dist/**', '**/build/**'],
+    });
+
+    for (const match of matches) {
+      if (!entryPoints.some((e) => e.file === match)) {
+        entryPoints.push({
+          file: match,
+          type: 'source',
+        });
+      }
+    }
+  }
+
+  // Also look for common dev server entry points
+  const devPatterns = [
+    'src/index.ts',
+    'src/index.tsx',
+    'src/main.ts',
+    'src/main.tsx',
+    'src/app.ts',
+    'src/server.ts',
+    'app/index.ts',
+    'app/main.ts',
+    'lib/index.ts',
+  ];
+
+  for (const pattern of devPatterns) {
+    if (await pathExists(join(projectDir, pattern))) {
+      if (!entryPoints.some((e) => e.file === pattern)) {
+        entryPoints.push({
+          file: pattern,
+          type: 'source',
+        });
+      }
+    }
+  }
+
+  return entryPoints;
+}
+
+/**
+ * Extract dependencies from a project
+ */
+export async function extractDependencies(
+  projectDir: string
+): Promise<ExternalDependency[]> {
+  const dependencies: ExternalDependency[] = [];
+
+  // Read package.json
+  const packageJson = await readJsonFile<{
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+  }>(join(projectDir, 'package.json'));
+
+  if (packageJson) {
+    // Production dependencies
+    if (packageJson.dependencies) {
+      for (const [name, version] of Object.entries(packageJson.dependencies)) {
+        dependencies.push({
+          name,
+          type: 'production',
+          usedBy: [],
+          configLocation: 'package.json',
+          version,
+        });
+      }
+    }
+
+    // Dev dependencies
+    if (packageJson.devDependencies) {
+      for (const [name, version] of Object.entries(packageJson.devDependencies)) {
+        dependencies.push({
+          name,
+          type: 'development',
+          usedBy: [],
+          configLocation: 'package.json',
+          version,
+        });
+      }
+    }
+
+    // Peer dependencies
+    if (packageJson.peerDependencies) {
+      for (const [name, version] of Object.entries(packageJson.peerDependencies)) {
+        dependencies.push({
+          name,
+          type: 'peer',
+          usedBy: [],
+          configLocation: 'package.json',
+          version,
+        });
+      }
+    }
+  }
+
+  return dependencies;
+}
+
+/**
+ * Scan source files and count them
+ */
+export async function scanSourceFiles(
+  projectDir: string,
+  language: string
+): Promise<{ files: string[]; totalLines: number }> {
+  const languageConfig = LANGUAGE_PATTERNS[language];
+  const extensions = languageConfig?.extensions || ['.ts', '.js'];
+
+  const patterns = extensions.map((ext) => `**/*${ext}`);
+
+  const files = await glob(patterns, {
+    cwd: projectDir,
+    absolute: false,
+    ignore: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/.git/**',
+      '**/coverage/**',
+      '**/*.min.js',
+      '**/*.d.ts',
+    ],
+  });
+
+  let totalLines = 0;
+  for (const file of files) {
+    totalLines += await countLines(join(projectDir, file));
+  }
+
+  return { files, totalLines };
+}
+
+/**
+ * Extract features from source files based on patterns
+ */
+export async function extractFeatures(
+  projectDir: string,
+  sourceFiles: string[]
+): Promise<Feature[]> {
+  const features: Feature[] = [];
+  const featureMap = new Map<string, Feature>();
+
+  for (const file of sourceFiles) {
+    const category = detectFeatureCategory(file, basename(file, extname(file)));
+    const featureName = deriveFeatureName(file);
+
+    // Group related files into features
+    const existingFeature = featureMap.get(featureName);
+    if (existingFeature) {
+      existingFeature.sourceLocations.push({ file, lines: [1, 1] });
+    } else {
+      const feature = createFeature(featureName, file, [1, 1]);
+      featureMap.set(featureName, feature);
+      features.push(feature);
+    }
+  }
+
+  return features;
+}
+
+/**
+ * Derive a feature name from a file path
+ */
+function deriveFeatureName(filePath: string): string {
+  const parts = filePath.split('/');
+  const fileName = basename(filePath, extname(filePath));
+
+  // Skip generic names
+  const genericNames = ['index', 'main', 'app', 'utils', 'helpers', 'types', 'constants'];
+  if (genericNames.includes(fileName.toLowerCase())) {
+    // Use parent directory name
+    if (parts.length >= 2) {
+      const parentDir = parts[parts.length - 2];
+      if (parentDir) {
+        return parentDir;
+      }
+    }
+  }
+
+  return fileName;
+}
+
+/**
+ * Run the full discovery process
+ */
+export async function runDiscovery(
+  projectDir: string,
+  onProgress?: (message: string) => void
+): Promise<FunctionalityMap> {
+  const log = (msg: string) => onProgress?.(msg);
+
+  log('Starting discovery process');
+
+  // Detect language
+  log('Detecting project language');
+  const language = await detectLanguage(projectDir);
+  log(`Detected language: ${language}`);
+
+  // Detect framework
+  log('Detecting framework');
+  const framework = await detectFramework(projectDir);
+  if (framework) {
+    log(`Detected framework: ${framework}`);
+  }
+
+  // Detect architecture
+  log('Analyzing architecture pattern');
+  const architecturePattern = await detectArchitecturePattern(projectDir);
+  log(`Detected architecture: ${architecturePattern}`);
+
+  // Initialize the map
+  const map = createEmptyFunctionalityMap();
+  map.sourceAnalysis.language = language;
+  map.sourceAnalysis.framework = framework;
+  map.sourceAnalysis.architecturePattern = architecturePattern;
+
+  // Handle monorepo differently
+  if (architecturePattern === 'monorepo') {
+    log('Scanning monorepo workspaces');
+    const workspaces = await findWorkspacePackages(projectDir);
+    log(`Found ${workspaces.length} workspace packages`);
+
+    let totalFiles = 0;
+    let totalLines = 0;
+    const allDependencies: ExternalDependency[] = [];
+    const allFeatures: Feature[] = [];
+
+    for (const workspace of workspaces) {
+      const workspacePath = join(projectDir, workspace);
+      log(`Scanning workspace: ${workspace}`);
+
+      // Find entry points for this workspace
+      const entryPoints = await findEntryPoints(workspacePath, language);
+      for (const ep of entryPoints) {
+        ep.file = join(workspace, ep.file);
+        map.sourceAnalysis.entryPoints.push(ep);
+      }
+
+      // Extract dependencies
+      const deps = await extractDependencies(workspacePath);
+      for (const dep of deps) {
+        dep.usedBy = [workspace];
+        // Merge with existing dependency
+        const existing = allDependencies.find((d) => d.name === dep.name);
+        if (existing) {
+          if (!existing.usedBy.includes(workspace)) {
+            existing.usedBy.push(workspace);
+          }
+        } else {
+          allDependencies.push(dep);
+        }
+      }
+
+      // Scan source files
+      const { files, totalLines: lines } = await scanSourceFiles(workspacePath, language);
+      totalFiles += files.length;
+      totalLines += lines;
+
+      // Extract features
+      const features = await extractFeatures(workspacePath, files);
+      for (const f of features) {
+        f.sourceLocations = f.sourceLocations.map((loc) => ({
+          ...loc,
+          file: join(workspace, loc.file),
+        }));
+        allFeatures.push(f);
+      }
+    }
+
+    map.sourceAnalysis.totalFiles = totalFiles;
+    map.sourceAnalysis.totalLines = totalLines;
+    map.externalDependencies = allDependencies;
+    map.features = allFeatures;
+  } else {
+    // Standard project discovery
+    log('Scanning source files');
+    const { files, totalLines } = await scanSourceFiles(projectDir, language);
+    log(`Found ${files.length} source files with ${totalLines} total lines`);
+    map.sourceAnalysis.totalFiles = files.length;
+    map.sourceAnalysis.totalLines = totalLines;
+
+    log('Finding entry points');
+    const entryPoints = await findEntryPoints(projectDir, language);
+    log(`Found ${entryPoints.length} entry points`);
+    map.sourceAnalysis.entryPoints = entryPoints;
+
+    log('Extracting external dependencies');
+    const dependencies = await extractDependencies(projectDir);
+    log(`Found ${dependencies.length} dependencies`);
+    map.externalDependencies = dependencies;
+
+    log('Extracting features from source code');
+    const features = await extractFeatures(projectDir, files);
+    log(`Extracted ${features.length} features`);
+    map.features = features;
+  }
+
+  // Prioritize features
+  log('Prioritizing features');
+  const prioritizedMap = prioritizeFeatures(map);
+
+  log('Discovery complete');
+  return prioritizedMap;
+}
+
+/**
  * Export discovery utilities
  */
 export const discovery = {
@@ -499,6 +1115,16 @@ export const discovery = {
   prioritizeFeatures,
   generateDiscoveryReport,
   saveDiscoveryResults,
+  // New exports
+  detectLanguage,
+  detectFramework,
+  detectArchitecturePattern,
+  findWorkspacePackages,
+  findEntryPoints,
+  extractDependencies,
+  scanSourceFiles,
+  extractFeatures,
+  runDiscovery,
   LANGUAGE_PATTERNS,
   FRAMEWORK_PATTERNS,
   ENTRY_POINT_PATTERNS,

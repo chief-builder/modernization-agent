@@ -275,7 +275,7 @@ function getBaseCommand(command: string): string {
 
   // Get the first word (the actual command)
   const match = cmd.match(/^(\S+)/);
-  return match ? match[1] : '';
+  return match?.[1] ?? '';
 }
 
 /**

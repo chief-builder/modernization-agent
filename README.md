@@ -362,11 +362,12 @@ Dangerous operations are blocked:
 
 ### Approval Gates
 
-High-risk operations require explicit approval:
-- `git push` - Pushing changes to remote
+High-risk operations require explicit approval before execution:
 - `rm` - File deletion
-- Database modifications
-- Process termination
+- `kill` - Process termination
+- Database modifications (`DELETE FROM`, `UPDATE...SET`, `ALTER TABLE`)
+
+Note: `git push` is blocked entirely (not in allowlist) to prevent accidental pushes. Force push operations (`git push --force`) are blocked as dangerous patterns.
 
 ### Mode-Specific Adjustments
 

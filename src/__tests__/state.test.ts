@@ -182,7 +182,7 @@ describe('State Management', () => {
       expect(loaded).not.toBeNull();
       expect(loaded!.sourceAnalysis.language).toBe('typescript');
       expect(loaded!.features).toHaveLength(1);
-      expect(loaded!.features[0].name).toBe('Test Feature');
+      expect(loaded!.features[0]!.name).toBe('Test Feature');
     });
 
     it('should return null for non-existent map', async () => {
@@ -246,7 +246,7 @@ describe('State Management', () => {
 
       expect(id).toMatch(/^approval_\d+$/);
       expect(state.pendingApprovals).toHaveLength(1);
-      expect(state.pendingApprovals[0].status).toBe('pending');
+      expect(state.pendingApprovals[0]!.status).toBe('pending');
     });
 
     it('should resolve approval', () => {
@@ -261,8 +261,8 @@ describe('State Management', () => {
       const result = resolveApproval(state, id, true, 'test-user');
 
       expect(result).toBe(true);
-      expect(state.pendingApprovals[0].status).toBe('approved');
-      expect(state.pendingApprovals[0].approvedBy).toBe('test-user');
+      expect(state.pendingApprovals[0]!.status).toBe('approved');
+      expect(state.pendingApprovals[0]!.approvedBy).toBe('test-user');
     });
 
     it('should reject approval', () => {
@@ -276,7 +276,7 @@ describe('State Management', () => {
 
       resolveApproval(state, id, false);
 
-      expect(state.pendingApprovals[0].status).toBe('rejected');
+      expect(state.pendingApprovals[0]!.status).toBe('rejected');
     });
 
     it('should return false for non-existent approval', () => {

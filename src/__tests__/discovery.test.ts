@@ -118,8 +118,8 @@ describe('Discovery Module', () => {
       expect(feature.category).toBe('authentication');
       expect(feature.discoveryMethod).toBe('static');
       expect(feature.sourceLocations).toHaveLength(1);
-      expect(feature.sourceLocations[0].file).toBe('src/auth/login.ts');
-      expect(feature.sourceLocations[0].lines).toEqual([1, 100]);
+      expect(feature.sourceLocations[0]!.file).toBe('src/auth/login.ts');
+      expect(feature.sourceLocations[0]!.lines).toEqual([1, 100]);
       expect(feature.dependencies).toEqual([]);
     });
 
@@ -215,7 +215,7 @@ describe('Discovery Module', () => {
       addOrUpdateFeature(map, feature);
 
       expect(map.features).toHaveLength(1);
-      expect(map.features[0].name).toBe('New Feature');
+      expect(map.features[0]!.name).toBe('New Feature');
     });
 
     it('should update existing feature', () => {
@@ -227,7 +227,7 @@ describe('Discovery Module', () => {
       addOrUpdateFeature(map, feature2);
 
       expect(map.features).toHaveLength(1);
-      expect(map.features[0].sourceLocations).toHaveLength(2);
+      expect(map.features[0]!.sourceLocations).toHaveLength(2);
     });
   });
 
@@ -300,7 +300,7 @@ describe('Discovery Module', () => {
 
       const prioritized = prioritizeFeatures(map);
 
-      expect(prioritized.features[0].category).toBe('authentication');
+      expect(prioritized.features[0]!.category).toBe('authentication');
     });
 
     it('should assign complexity ratings', () => {
@@ -309,8 +309,8 @@ describe('Discovery Module', () => {
 
       const prioritized = prioritizeFeatures(map);
 
-      expect(prioritized.features[0].complexity).toBeDefined();
-      expect(prioritized.features[0].priority).toBeDefined();
+      expect(prioritized.features[0]!.complexity).toBeDefined();
+      expect(prioritized.features[0]!.priority).toBeDefined();
     });
   });
 
